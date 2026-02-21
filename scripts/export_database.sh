@@ -187,8 +187,8 @@ case "$DB_TYPE" in
         # --target-server-version: Set to 2016 for compatibility
         mssql-scripter \
             -S "$HOST,$PORT" \
-            -u "$USERNAME" \
-            -p "$PASSWORD" \
+            -U "$USERNAME" \
+            -P "$PASSWORD" \
             -d "$DATABASE" \
             --schema-and-data \
             --exclude-use-database \
