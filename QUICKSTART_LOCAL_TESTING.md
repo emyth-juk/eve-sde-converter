@@ -2,6 +2,26 @@
 
 Get started testing your GitHub Actions workflows locally in under 5 minutes.
 
+## Prerequisites
+
+Before running any `test-manual` commands or `export_database.sh`, you need the
+appropriate host-side dump tools installed. The export scripts connect directly to
+the database containers over their published ports — they do not run inside Docker.
+
+| Database   | Tool needed  | Install (macOS)                                                                 | Install (Ubuntu/Debian)                          |
+|------------|--------------|---------------------------------------------------------------------------------|--------------------------------------------------|
+| MySQL      | `mysqldump`  | `brew install mysql-client` then add `/opt/homebrew/opt/mysql-client/bin` to PATH | `sudo apt-get install -y mysql-client`          |
+| PostgreSQL | `pg_dump`    | `brew install libpq` then add `/opt/homebrew/opt/libpq/bin` to PATH             | `sudo apt-get install -y postgresql-client`      |
+| MSSQL      | *(none)*     | Uses `pymssql` from `requirements.txt` — no extra tools needed                  | Uses `pymssql` from `requirements.txt`           |
+
+Also ensure your Python environment is set up:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
 ## Installation
 
 ```bash

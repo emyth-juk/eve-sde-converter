@@ -6,6 +6,50 @@ This guide explains how to test the GitHub Actions workflows locally without pus
 
 - Docker installed and running
 - Homebrew (macOS) or appropriate package manager
+- Python 3.12+ with project dependencies: `pip install -r requirements.txt`
+- SDE data in the `sde/` directory (run `./runconversion.sh` or download manually)
+
+### Host tools required for `test-manual` and `export_database.sh`
+
+The export scripts connect to the database containers over their published ports
+(`127.0.0.1:3306`, `5432`, `1433`) and run the dump tools directly on your host machine.
+You need the appropriate client tools installed for each database type.
+
+#### MySQL — requires `mysqldump`
+
+```bash
+# macOS (Homebrew)
+brew install mysql-client
+export PATH="/opt/homebrew/opt/mysql-client/bin:$PATH"
+
+# Ubuntu/Debian
+sudo apt-get install -y mysql-client
+
+# Fedora/RHEL
+sudo dnf install -y mysql
+```
+
+#### PostgreSQL — requires `pg_dump`
+
+```bash
+# macOS (Homebrew)
+brew install libpq
+export PATH="/opt/homebrew/opt/libpq/bin:$PATH"
+
+# Ubuntu/Debian
+sudo apt-get install -y postgresql-client
+
+# Fedora/RHEL
+sudo dnf install -y postgresql
+```
+
+#### MSSQL — no extra host tools needed
+
+MSSQL export uses `scripts/mssql_export.py` which connects via `pymssql`
+(already installed as part of `requirements.txt`). No additional system
+packages are required.
+
+---
 
 ## Tools Overview
 

@@ -36,6 +36,7 @@ print_error() {
 
 # Function to check prerequisites
 check_prerequisites() {
+    local db_type="${1:-}"
     print_info "Checking prerequisites..."
 
     # Check Docker
@@ -67,7 +68,57 @@ check_prerequisites() {
         exit 1
     fi
 
+    # Check database dump tools when a specific db type is requested
+    if [ -n "$db_type" ]; then
+        check_dump_tools "$db_type"
+    fi
+
     print_success "Prerequisites check complete"
+}
+
+# Check that the host-side dump tool required for a given database type is installed.
+# Called with the db type before a test-manual run so the user gets a clear error
+# with install instructions rather than a cryptic failure mid-export.
+check_dump_tools() {
+    local db_type="$1"
+
+    check_mysql_tools() {
+        if ! command -v mysqldump &> /dev/null; then
+            print_error "mysqldump not found. It is required to export the MySQL database."
+            print_info "Install on macOS:         brew install mysql-client"
+            print_info "                          export PATH=\"/opt/homebrew/opt/mysql-client/bin:\$PATH\""
+            print_info "Install on Ubuntu/Debian: sudo apt-get install -y mysql-client"
+            print_info "Install on Fedora/RHEL:   sudo dnf install -y mysql"
+            exit 1
+        fi
+    }
+
+    check_postgres_tools() {
+        if ! command -v pg_dump &> /dev/null; then
+            print_error "pg_dump not found. It is required to export the PostgreSQL database."
+            print_info "Install on macOS:         brew install libpq"
+            print_info "                          export PATH=\"/opt/homebrew/opt/libpq/bin:\$PATH\""
+            print_info "Install on Ubuntu/Debian: sudo apt-get install -y postgresql-client"
+            print_info "Install on Fedora/RHEL:   sudo dnf install -y postgresql"
+            exit 1
+        fi
+    }
+
+    case "$db_type" in
+        mysql)
+            check_mysql_tools
+            ;;
+        postgres)
+            check_postgres_tools
+            ;;
+        mssql|sqlite)
+            # sqlite needs no dump tool; mssql uses mssql_export.py via pymssql
+            ;;
+        all)
+            check_mysql_tools
+            check_postgres_tools
+            ;;
+    esac
 }
 
 # Function to validate workflow syntax
@@ -351,27 +402,12 @@ test_manual_single() {
             fi
             print_success "MySQL conversion complete"
 
-            # Export to SQL dump
+            # Export to SQL dump using export_database.sh
             print_info "Exporting MySQL database to SQL dump..."
-            if ! docker exec eve-sde-mysql-test mysqldump \
-                --host=localhost \
-                --user=evesde \
-                --password=evesdepass \
-                --single-transaction \
-                --quick \
-                --lock-tables=false \
-                --no-tablespaces \
-                --routines \
-                --triggers \
-                --events \
-                evesde > eve-mysql.sql; then
+            if ! "$SCRIPT_DIR/export_database.sh" mysql \
+                "mysql+pymysql://evesde:evesdepass@127.0.0.1:3306/evesde?charset=utf8" \
+                "eve-mysql.sql.gz"; then
                 print_error "MySQL export failed"
-                return 1
-            fi
-
-            print_info "Compressing SQL dump..."
-            if ! gzip -f eve-mysql.sql; then
-                print_error "MySQL compression failed"
                 return 1
             fi
             print_success "MySQL export complete: eve-mysql.sql.gz"
@@ -385,24 +421,12 @@ test_manual_single() {
             fi
             print_success "PostgreSQL conversion complete"
 
-            # Export to SQL dump
+            # Export to SQL dump using export_database.sh
             print_info "Exporting PostgreSQL database to SQL dump..."
-            if ! docker exec eve-sde-postgres-test pg_dump \
-                --host=localhost \
-                --username=evesde \
-                --format=plain \
-                --no-owner \
-                --no-privileges \
-                --clean \
-                --if-exists \
-                evesde > eve-postgresql.sql; then
+            if ! "$SCRIPT_DIR/export_database.sh" postgresql \
+                "postgresql+psycopg2://evesde:evesdepass@127.0.0.1:5432/evesde" \
+                "eve-postgresql.sql.gz"; then
                 print_error "PostgreSQL export failed"
-                return 1
-            fi
-
-            print_info "Compressing SQL dump..."
-            if ! gzip -f eve-postgresql.sql; then
-                print_error "PostgreSQL compression failed"
                 return 1
             fi
             print_success "PostgreSQL export complete: eve-postgresql.sql.gz"
@@ -416,34 +440,12 @@ test_manual_single() {
             fi
             print_success "MSSQL conversion complete"
 
-            # Export to SQL dump using mssql-scripter
-            print_info "Checking if mssql-scripter is installed..."
-            if ! command -v mssql-scripter &> /dev/null; then
-                print_warning "mssql-scripter not found, installing..."
-                if ! pip install -q mssql-scripter; then
-                    print_error "Failed to install mssql-scripter"
-                    return 1
-                fi
-            fi
-
+            # Export to SQL dump using export_database.sh (which uses mssql_export.py)
             print_info "Exporting MSSQL database to SQL dump..."
-            # mssql-scripter requires absolute path and directory must exist
-            local mssql_output="$PROJECT_ROOT/eve-mssql.sql"
-            if ! mssql-scripter \
-                -S 127.0.0.1 \
-                -U sa \
-                -P 'YourStrong!Passw0rd' \
-                -d evesde \
-                --schema-and-data \
-                --script-create \
-                --file-path "$mssql_output"; then
+            if ! "$SCRIPT_DIR/export_database.sh" mssql \
+                "mssql+pymssql://sa:YourStrong!Passw0rd@127.0.0.1:1433/evesde?charset=utf8" \
+                "eve-mssql.sql.gz"; then
                 print_error "MSSQL export failed"
-                return 1
-            fi
-
-            print_info "Compressing SQL dump..."
-            if ! gzip -f eve-mssql.sql; then
-                print_error "MSSQL compression failed"
                 return 1
             fi
             print_success "MSSQL export complete: eve-mssql.sql.gz"
@@ -492,6 +494,24 @@ DATABASE TYPES:
     postgres            PostgreSQL database
     mssql               Microsoft SQL Server
     all                 Run all database conversions sequentially
+
+PREREQUISITES:
+    All database types:
+      - Docker and docker-compose
+      - Python 3.12+ with project dependencies installed (pip install -r requirements.txt)
+      - SDE data in the sde/ directory
+
+    test-manual mysql requires mysqldump on the host:
+      macOS:          brew install mysql-client && export PATH="/opt/homebrew/opt/mysql-client/bin:$PATH"
+      Ubuntu/Debian:  sudo apt-get install -y mysql-client
+      Fedora/RHEL:    sudo dnf install -y mysql
+
+    test-manual postgres requires pg_dump on the host:
+      macOS:          brew install libpq && export PATH="/opt/homebrew/opt/libpq/bin:$PATH"
+      Ubuntu/Debian:  sudo apt-get install -y postgresql-client
+      Fedora/RHEL:    sudo dnf install -y postgresql
+
+    test-manual mssql uses mssql_export.py (pymssql) — no extra host tools needed.
 
 EXAMPLES:
     $0 setup                    # Start all database services
@@ -551,7 +571,7 @@ main() {
                 print_info "Usage: $0 test-manual [sqlite|mysql|postgres|mssql|all]"
                 exit 1
             fi
-            check_prerequisites
+            check_prerequisites "$option"
             test_manual "$option"
             ;;
         logs)

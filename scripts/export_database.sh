@@ -15,6 +15,7 @@
 
 set -e  # Exit on error
 set -u  # Exit on undefined variable
+set -o pipefail  # Pipe fails if any command in the pipe fails
 
 # Color codes for output
 RED='\033[0;31m'
@@ -172,28 +173,19 @@ case "$DB_TYPE" in
         ;;
 
     mssql)
-        log_info "Using mssql-scripter to export MSSQL database..."
+        log_info "Using mssql_export.py to export MSSQL database..."
 
-        # Check if mssql-scripter is available
-        if ! command -v mssql-scripter &> /dev/null; then
-            log_error "mssql-scripter command not found. Please install mssql-scripter via pip."
+        # mssql-scripter is archived and broken on Ubuntu 22.04+ (requires OpenSSL 1.1).
+        # We use a Python script with pymssql (already a project dependency) instead.
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        EXPORTER="$SCRIPT_DIR/mssql_export.py"
+
+        if [ ! -f "$EXPORTER" ]; then
+            log_error "mssql_export.py not found at: $EXPORTER"
             exit 1
         fi
 
-        # Export with mssql-scripter
-        # --schema-and-data: Include both schema and data
-        # --exclude-use-database: Don't include USE DATABASE statement
-        # --check-for-existence: Add IF EXISTS checks
-        # --target-server-version: Set to 2016 for compatibility
-        mssql-scripter \
-            -S "$HOST,$PORT" \
-            -U "$USERNAME" \
-            -P "$PASSWORD" \
-            -d "$DATABASE" \
-            --schema-and-data \
-            --exclude-use-database \
-            --check-for-existence \
-            --target-server-version 2016 | gzip > "$OUTPUT_FILE"
+        python3 "$EXPORTER" "$HOST" "$PORT" "$USERNAME" "$PASSWORD" "$DATABASE" | gzip > "$OUTPUT_FILE"
 
         log_success "MSSQL export completed"
         ;;
@@ -205,7 +197,12 @@ case "$DB_TYPE" in
         ;;
 esac
 
-# Verify output file exists and has content
+# Verify output file exists and meets minimum size threshold.
+# A valid export should be at minimum several MB (even small databases compress
+# to well over 1 MB). Anything under this threshold indicates a failed export
+# where the tool printed an error message instead of actual data.
+MIN_SIZE_BYTES=$((1 * 1024 * 1024))  # 1 MB
+
 if [ ! -f "$OUTPUT_FILE" ]; then
     log_error "Output file was not created: $OUTPUT_FILE"
     exit 1
@@ -214,6 +211,13 @@ fi
 FILE_SIZE=$(stat -f%z "$OUTPUT_FILE" 2>/dev/null || stat -c%s "$OUTPUT_FILE" 2>/dev/null)
 if [ "$FILE_SIZE" -eq 0 ]; then
     log_error "Output file is empty: $OUTPUT_FILE"
+    exit 1
+fi
+
+if [ "$FILE_SIZE" -lt "$MIN_SIZE_BYTES" ]; then
+    log_error "Output file is suspiciously small (${FILE_SIZE} bytes < ${MIN_SIZE_BYTES} byte minimum)."
+    log_error "This likely indicates the export tool failed and wrote an error message instead of data."
+    log_error "Check the export tool output above for errors."
     exit 1
 fi
 
